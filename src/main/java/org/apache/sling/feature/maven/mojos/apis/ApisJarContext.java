@@ -21,6 +21,7 @@ import java.io.IOException;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -56,11 +57,11 @@ public class ApisJarContext {
 
         private File sourceDirectory;
 
-        /** Exported packages used by all regions. */
+        /** Exported packages used by any region. */
         private Set<String> usedExportedPackages;
 
         /** Exported packages per region. */
-        private final Map<String, Set<Clause>> usedExportedPackagesRegion = new HashMap<>();
+        private final Map<String, Set<Clause>> usedExportedPackagesPerRegion = new HashMap<>();
 
         /** Flag if used as dependency */
         private final Map<String, Boolean> useAsDependencyPerRegion = new HashMap<>();
@@ -72,6 +73,8 @@ public class ApisJarContext {
         private List<License> licenses;
 
         private final Set<String> sources = new HashSet<>();
+
+        private final Map<String, Set<Clause>> providedCapabilitiesPerRegion = new HashMap<>();
 
         public ArtifactInfo(final Artifact artifact) {
             this.artifact = artifact;
@@ -118,11 +121,11 @@ public class ApisJarContext {
         }
 
         public Set<Clause> getUsedExportedPackages(final ApiRegion region) {
-            return this.usedExportedPackagesRegion.get(region.getName());
+            return this.usedExportedPackagesPerRegion.get(region.getName());
         }
 
         public void setUsedExportedPackages(final ApiRegion region, final Set<Clause> usedExportedPackages, final boolean useAsDependency) {
-            this.usedExportedPackagesRegion.put(region.getName(), usedExportedPackages);
+            this.usedExportedPackagesPerRegion.put(region.getName(), usedExportedPackages);
             this.useAsDependencyPerRegion.put(region.getName(), useAsDependency);
         }
 
@@ -207,6 +210,15 @@ public class ApisJarContext {
         public Set<String> getSources() {
             return this.sources;
         }
+
+        public Set<Clause> getProvidedCapabilities(final ApiRegion region) {
+            return providedCapabilitiesPerRegion.get(region.getName());
+        }
+
+        public void setProvidedCapabilities(ApiRegion region, Set<Clause> providedCapabilitiesPerRegion) {
+            this.providedCapabilitiesPerRegion.put(region.getName(), providedCapabilitiesPerRegion);
+        }
+
     }
 
     private final ApisConfiguration config;

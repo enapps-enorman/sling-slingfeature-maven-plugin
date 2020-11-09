@@ -16,10 +16,14 @@
  */
 package org.apache.sling.feature.maven.mojos;
 
-import org.junit.Test;
-
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNull;
+
+import org.apache.commons.lang.StringUtils;
+import org.apache.felix.utils.manifest.Clause;
+import org.apache.felix.utils.manifest.Parser;
+import org.junit.Ignore;
+import org.junit.Test;
 
 public class ApisJarMojoTest {
     @Test
@@ -36,5 +40,16 @@ public class ApisJarMojoTest {
         assertEquals("bar", ajm.inferClassifier("blah/blah/foo-123-bar.jar", "foo", "123"));
         assertNull(ajm.inferClassifier("oof-123-bar.jar", "foo", "123"));
         assertNull(ajm.inferClassifier("foo-345-bar.jar", "foo", "123"));
+    }
+    
+    @Ignore
+    @Test()
+    public void testRoundtripOfProvideCapability() {
+        String providedCapabilitiesHeader = 
+                "osgi.implementation;osgi.implementation=\"osgi.metatype\";version:Version=\"1.4\";uses:=\"org.osgi.service.metatype\"," + 
+                "osgi.extender;osgi.extender=\"osgi.metatype\";version:Version=\"1.4\";uses:=\"org.osgi.service.metatype\"," + 
+                "osgi.service;objectClass:List<String>=\"org.osgi.service.metatype.MetaTypeService\";uses:=\"org.osgi.service.metatype\"";
+        final Clause[] providedCapabilities = Parser.parseHeader(providedCapabilitiesHeader);
+        assertEquals(providedCapabilitiesHeader, StringUtils.join(providedCapabilities, ","));
     }
 }

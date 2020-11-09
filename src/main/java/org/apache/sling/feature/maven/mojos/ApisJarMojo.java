@@ -102,6 +102,7 @@ import org.codehaus.plexus.archiver.util.DefaultFileSet;
 import org.codehaus.plexus.components.io.fileselectors.FileSelector;
 import org.codehaus.plexus.components.io.fileselectors.IncludeExcludeFileSelector;
 import org.osgi.framework.Constants;
+import org.osgi.namespace.service.ServiceNamespace;
 
 /**
  * Generates the APIs JARs for the selected feature files.
@@ -778,6 +779,7 @@ public class ApisJarMojo extends AbstractIncludingFeatureMojo {
             // calculate the exported packages in the manifest file for all regions
             final Set<String> usedExportedPackages = computeUsedExportPackages(ctx, exportedPackageClauses, artifact);
 
+            boolean isArtifactFullyExported = usedExportedPackages.size() == exportedPackageClauses.length;
             if (!usedExportedPackages.isEmpty()) {
                 // check for previous version of artifact due to toggles
                 ArtifactId previous = null;
@@ -832,6 +834,13 @@ public class ApisJarMojo extends AbstractIncludingFeatureMojo {
                         }
                     }
                     info.setUsedExportedPackages(region, usedExportedPackagesPerRegion, useAsDependency);
+                    if (!isArtifactFullyExported) {
+                        final Set<Clause> providedCapabilitiesPerRegion = computeProvidedCapabilities(region, getProvidedCapability(manifest), artifact);
+                        info.setProvidedCapabilities(region, providedCapabilitiesPerRegion);
+                    } else {
+                         // in case there are no region restrictions just include all capabilities
+                        info.setProvidedCapabilities(region, new HashSet<>(Arrays.asList(getProvidedCapability(manifest))));
+                    }
                 }
 
                 info.setBinDirectory(new File(ctx.getDeflatedBinDir(), info.getId().toMvnName()));
@@ -871,6 +880,9 @@ public class ApisJarMojo extends AbstractIncludingFeatureMojo {
                     ApisUtil.buildJavadocClasspath(getLog(), repositorySystem, mavenSession, artifact.getId())
                             .forEach(ctx::addJavadocClasspath);
                 }
+
+            } else {
+                // TODO: add relevant capabilities?
             }
         }
     }
@@ -1435,6 +1447,13 @@ public class ApisJarMojo extends AbstractIncludingFeatureMojo {
         return exportPackages;
     }
 
+    static Clause[] getProvidedCapability(final Manifest manifest) {
+        final String providedCapabilitiesHeader = manifest.getMainAttributes().getValue(Constants.PROVIDE_CAPABILITY);
+        final Clause[] providedCapabilities = Parser.parseHeader(providedCapabilitiesHeader);
+
+        return providedCapabilities;
+    }
+    
     /**
      * Compute exports based on a single region
      *
@@ -1462,6 +1481,41 @@ public class ApisJarMojo extends AbstractIncludingFeatureMojo {
         return result;
     }
 
+   /**
+    * Compute provided capabilities for a single region
+    *
+    * @return List of packages exported by this bundle and used in the region
+    */
+   private Set<Clause> computeProvidedCapabilities(final ApiRegion apiRegion, final Clause[] providedCapabilities,
+           final Artifact bundle) {
+       final Set<Clause> result = new HashSet<>();
+
+       for (final Clause providedCapability : providedCapabilities) {
+           // only consider "osgi.service" capabilities per region (https://docs.osgi.org/specification/osgi.cmpn/7.0.0/service.namespaces.html#service.namespaces-osgi.service.namespace)
+           // because those can be mapped to Java packages
+           if (ServiceNamespace.SERVICE_NAMESPACE.equals(providedCapability.getName())) {
+               String serviceObjectClasses = providedCapability.getAttribute(ServiceNamespace.CAPABILITY_OBJECTCLASS_ATTRIBUTE+":List<String>");
+               if (serviceObjectClasses == null) {
+                   throw new IllegalArgumentException("Could not find mandatory attribute '" + ServiceNamespace.CAPABILITY_OBJECTCLASS_ATTRIBUTE + "' in clause '" + providedCapability + "' of bundle " + bundle.getId());
+               }
+               if (areServiceObjectClassesContainedInRegion(apiRegion, serviceObjectClasses, bundle)) {
+                   result.add(providedCapability);
+               }
+           }
+       }
+       return result;
+    }
+
+    private boolean areServiceObjectClassesContainedInRegion(final ApiRegion apiRegion, String serviceObjectClasses, final Artifact bundle) {
+        // this is a comma separated list (https://docs.osgi.org/specification/osgi.cmpn/7.0.0/service.namespaces.html#service.namespaces-osgi.service.namespace)
+        for (String serviceObjectClass : serviceObjectClasses.split(",")) {
+            String relevantPackage = serviceObjectClass.substring(0, serviceObjectClass.lastIndexOf("."));
+            if (apiRegion.getExportByName(relevantPackage) == null || ApisUtil.getIgnoredPackages(bundle).contains(relevantPackage)) {
+                return false;
+            }
+        }
+        return true;
+    }
     /**
      * Compute exports based on all regions
      *
@@ -1497,7 +1551,7 @@ public class ApisJarMojo extends AbstractIncludingFeatureMojo {
         return result;
     }
 
-    private String getApiExportClause(final ApiRegion region, final Collection<ArtifactInfo> infos) {
+    private String getApiExportClauses(final ApiRegion region, final Collection<ArtifactInfo> infos) {
         final StringBuilder sb = new StringBuilder();
         boolean first = true;
         for (final ArtifactInfo info : infos) {
@@ -1513,6 +1567,22 @@ public class ApisJarMojo extends AbstractIncludingFeatureMojo {
         return sb.toString();
     }
 
+    private String getApiProvideCapabilityClauses(final ApiRegion region, final Collection<ArtifactInfo> infos) {
+        final StringBuilder sb = new StringBuilder();
+        boolean first = true;
+        for (final ArtifactInfo info : infos) {
+            for (final Clause clause : info.getProvidedCapabilities(region)) {
+                if (first) {
+                    first = false;
+                } else {
+                    sb.append(',');
+                }
+                sb.append(clause.toString());
+            }
+        }
+        return sb.toString();
+    }
+ 
     private void addFileSets(final ApiRegion apiRegion, 
              final ArtifactType archiveType,
              final Collection<ArtifactInfo> infos,
@@ -1673,7 +1743,7 @@ public class ApisJarMojo extends AbstractIncludingFeatureMojo {
         if (archiveType == ArtifactType.APIS) {
             // APIs need OSGi Manifest entry
             String symbolicName = artifactName.replace('-', '.');
-            archiveConfiguration.addManifestEntry("Export-Package", getApiExportClause(apiRegion, infos));
+            archiveConfiguration.addManifestEntry("Export-Package", getApiExportClauses(apiRegion, infos));
             archiveConfiguration.addManifestEntry("Bundle-Description", project.getDescription());
             archiveConfiguration.addManifestEntry("Bundle-Version", targetId.getOSGiVersion().toString());
             archiveConfiguration.addManifestEntry("Bundle-ManifestVersion", "2");
@@ -1691,8 +1761,8 @@ public class ApisJarMojo extends AbstractIncludingFeatureMojo {
                 archiveConfiguration.addManifestEntry("Bundle-Vendor", project.getOrganization().getName());
             }
 
-            // add provide / require capability to make the jar unresolvable
-            archiveConfiguration.addManifestEntry("Provide-Capability", "osgi.unresolvable");
+            // add provide capability headers to make dependent bundle resolvable with the apis-jar
+            archiveConfiguration.addManifestEntry(Constants.PROVIDE_CAPABILITY, getApiProvideCapabilityClauses(apiRegion, infos));
             archiveConfiguration.addManifestEntry("Require-Capability", "osgi.unresolvable;filter:=\"(&(must.not.resolve=*)(!(must.not.resolve=*)))\",osgi.ee;filter:=\"(&(osgi.ee=JavaSE/compact2)(version=1.8))\"");
         }
         archiveConfiguration.addManifestEntry("Implementation-Version", targetId.getVersion());
